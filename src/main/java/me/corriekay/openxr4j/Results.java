@@ -1,4 +1,4 @@
-package me.corriekay.jvr;
+package me.corriekay.openxr4j;
 
 import java.lang.reflect.Field;
 import java.lang.reflect.Modifier;
@@ -46,7 +46,7 @@ final class Results {
     /** Throws if {@code result} is an error. Returns it otherwise, so qualified successes can be inspected. */
     static int check(String what, int result) {
         if (result < 0) {
-            throw new JvrException(what, result);
+            throw new OpenXrException(what, result);
         }
         return result;
     }

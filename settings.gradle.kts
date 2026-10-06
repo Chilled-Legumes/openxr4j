@@ -1,1 +1,1 @@
-rootProject.name = "jvr"
+rootProject.name = "openxr4j"

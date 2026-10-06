@@ -1,4 +1,4 @@
-package me.corriekay.jvr;
+package me.corriekay.openxr4j;
 
 import static org.lwjgl.system.MemoryUtil.memAddress;
 import static org.lwjgl.system.MemoryUtil.memAlloc;
@@ -210,20 +210,20 @@ public final class VrSession implements AutoCloseable {
      * wakes up, so check {@link #isTracked(Hand)}.
      *
      * @param applicationName the name the runtime shows for this program
-     * @throws JvrException if there is no runtime, no connected headset, or the
+     * @throws OpenXrException if there is no runtime, no connected headset, or the
      *                      runtime lacks a feature this kind of session needs
      */
     public static VrSession open(String applicationName) {
         if (!System.getProperty("os.name").toLowerCase().contains("linux")) {
-            throw new JvrException("Input-only sessions are implemented for Linux so far.");
+            throw new OpenXrException("Input-only sessions are implemented for Linux so far.");
         }
-        List<String> available = Jvr.availableExtensions();
+        List<String> available = OpenXr.availableExtensions();
         if (!available.contains(EXT_HEADLESS)) {
-            throw new JvrException("The OpenXR runtime does not offer " + EXT_HEADLESS
+            throw new OpenXrException("The OpenXR runtime does not offer " + EXT_HEADLESS
                     + ", which an input-only session needs.");
         }
         if (!available.contains(EXT_TIMESPEC)) {
-            throw new JvrException("The OpenXR runtime does not offer " + EXT_TIMESPEC
+            throw new OpenXrException("The OpenXR runtime does not offer " + EXT_TIMESPEC
                     + ", which an input-only session needs.");
         }
         return open(applicationName, 0L, new String[] {EXT_HEADLESS, EXT_TIMESPEC}, true);
@@ -244,8 +244,8 @@ public final class VrSession implements AutoCloseable {
      * controllers, so {@link #update()} is not needed.
      *
      * @param applicationName the name the runtime shows for this program
-     * @param glfwWindow      the GLFW window handle whose context jvr draws with
-     * @throws JvrException if there is no runtime, no connected headset, or the
+     * @param glfwWindow      the GLFW window handle whose context openxr4j draws with
+     * @throws OpenXrException if there is no runtime, no connected headset, or the
      *                      runtime lacks OpenGL support
      */
     public static VrSession open(String applicationName, long glfwWindow) {
@@ -253,12 +253,12 @@ public final class VrSession implements AutoCloseable {
             throw new IllegalArgumentException("glfwWindow must be a live GLFW window handle.");
         }
         if (GLFW.glfwGetPlatform() != GLFW.GLFW_PLATFORM_X11) {
-            throw new JvrException("jvr draws through X11 only so far. On Wayland, call"
+            throw new OpenXrException("openxr4j draws through X11 only so far. On Wayland, call"
                     + " glfwInitHint(GLFW_PLATFORM, GLFW_PLATFORM_X11) before glfwInit().");
         }
-        List<String> available = Jvr.availableExtensions();
+        List<String> available = OpenXr.availableExtensions();
         if (!available.contains(EXT_OPENGL)) {
-            throw new JvrException("The OpenXR runtime does not offer " + EXT_OPENGL + ".");
+            throw new OpenXrException("The OpenXR runtime does not offer " + EXT_OPENGL + ".");
         }
         boolean timespec = available.contains(EXT_TIMESPEC);
         String[] extensions = timespec ? new String[] {EXT_OPENGL, EXT_TIMESPEC} : new String[] {EXT_OPENGL};
@@ -678,14 +678,14 @@ public final class VrSession implements AutoCloseable {
      * The kind of controller the runtime says this hand is holding, as an
      * OpenXR interaction profile path such as
      * {@code /interaction_profiles/oculus/touch_controller}. Empty if the
-     * runtime has not matched this hand to any controller type jvr knows.
+     * runtime has not matched this hand to any controller type openxr4j knows.
      */
     public String controllerType(Hand hand) {
         return controllerTypes[hand.ordinal()];
     }
 
     /**
-     * How many controller types jvr managed to register button layouts for.
+     * How many controller types openxr4j managed to register button layouts for.
      * Zero would mean no controller can deliver input.
      */
     public int supportedControllerTypes() {
@@ -810,7 +810,7 @@ public final class VrSession implements AutoCloseable {
             XrApplicationInfo appInfo = XrApplicationInfo.calloc(stack)
                     .applicationName(stack.UTF8(fit(applicationName, 127)))
                     .applicationVersion(1)
-                    .engineName(stack.UTF8("jvr"))
+                    .engineName(stack.UTF8("openxr4j"))
                     .engineVersion(1)
                     .apiVersion(XR10.XR_MAKE_VERSION(1, 0, 0));
 
@@ -828,7 +828,7 @@ public final class VrSession implements AutoCloseable {
             int result = XR10.xrCreateInstance(createInfo, handle);
             if (result == XR10.XR_ERROR_RUNTIME_FAILURE) {
                 // SteamVR answers this way when it has no headset to talk to.
-                throw new JvrException("Connecting to the OpenXR runtime (is the headset connected and the"
+                throw new OpenXrException("Connecting to the OpenXR runtime (is the headset connected and the"
                         + " runtime running?)", result);
             }
             Results.check("Connecting to the OpenXR runtime", result);
@@ -850,7 +850,7 @@ public final class VrSession implements AutoCloseable {
             LongBuffer systemIdOut = stack.mallocLong(1);
             int result = XR10.xrGetSystem(instance, systemInfo, systemIdOut);
             if (result == XR10.XR_ERROR_FORM_FACTOR_UNAVAILABLE) {
-                throw new JvrException("No headset is connected to the OpenXR runtime.");
+                throw new OpenXrException("No headset is connected to the OpenXR runtime.");
             }
             Results.check("Finding the headset", result);
             systemId = systemIdOut.get(0);
@@ -882,7 +882,7 @@ public final class VrSession implements AutoCloseable {
                 PointerBuffer configs = org.lwjgl.opengl.GLX13.glXChooseFBConfig(xDisplay, screen,
                         stack.ints(org.lwjgl.opengl.GLX13.GLX_FBCONFIG_ID, configId.get(0), 0));
                 if (configs == null || configs.remaining() == 0) {
-                    throw new JvrException("Could not find the window's GLX framebuffer configuration.");
+                    throw new OpenXrException("Could not find the window's GLX framebuffer configuration.");
                 }
                 long fbConfig = configs.get(0);
                 IntBuffer visualId = stack.mallocInt(1);
@@ -930,8 +930,8 @@ public final class VrSession implements AutoCloseable {
 
             XrActionSetCreateInfo setInfo = XrActionSetCreateInfo.calloc(stack)
                     .type$Default()
-                    .actionSetName(stack.UTF8("jvr"))
-                    .localizedActionSetName(stack.UTF8("jvr input"))
+                    .actionSetName(stack.UTF8("openxr4j"))
+                    .localizedActionSetName(stack.UTF8("openxr4j input"))
                     .priority(0);
             PointerBuffer handle = stack.mallocPointer(1);
             Results.check("Creating the input set", XR10.xrCreateActionSet(instance, setInfo, handle));
@@ -1046,7 +1046,7 @@ public final class VrSession implements AutoCloseable {
                 hapticAction, "/user/hand/right/output/haptic");
 
         if (boundProfiles == 0) {
-            throw new JvrException("The OpenXR runtime accepted none of jvr's controller layouts.");
+            throw new OpenXrException("The OpenXR runtime accepted none of openxr4j's controller layouts.");
         }
     }
 
@@ -1119,7 +1119,7 @@ public final class VrSession implements AutoCloseable {
                 return;
             }
             if (exitRequested) {
-                throw new JvrException("The OpenXR runtime ended the session while it was starting.");
+                throw new OpenXrException("The OpenXR runtime ended the session while it was starting.");
             }
             if (System.nanoTime() > deadline) {
                 if (running) {
@@ -1127,14 +1127,14 @@ public final class VrSession implements AutoCloseable {
                     // That is a state the caller can ask about, not a failure.
                     return;
                 }
-                throw new JvrException("The OpenXR runtime did not start the session within "
+                throw new OpenXrException("The OpenXR runtime did not start the session within "
                         + (START_TIMEOUT_NANOS / 1_000_000_000L) + " seconds.");
             }
             try {
                 Thread.sleep(2);
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
-                throw new JvrException("Interrupted while waiting for the session to start.");
+                throw new OpenXrException("Interrupted while waiting for the session to start.");
             }
         }
     }
@@ -1259,7 +1259,7 @@ public final class VrSession implements AutoCloseable {
             if (display != null && display.displayTime() != 0L) {
                 return display.displayTime();
             }
-            throw new JvrException("This runtime cannot convert the system clock; call beginFrame() first.");
+            throw new OpenXrException("This runtime cannot convert the system clock; call beginFrame() first.");
         }
         // System.nanoTime() on Linux reads CLOCK_MONOTONIC, which is the clock this conversion expects.
         long nanos = System.nanoTime();
@@ -1328,7 +1328,7 @@ public final class VrSession implements AutoCloseable {
 
     /** Trims text so its UTF-8 form fits in {@code maxBytes}. */
     private static String fit(String text, int maxBytes) {
-        String result = text == null || text.isBlank() ? "jvr application" : text;
+        String result = text == null || text.isBlank() ? "openxr4j application" : text;
         while (result.getBytes(java.nio.charset.StandardCharsets.UTF_8).length > maxBytes) {
             result = result.substring(0, result.length() - 1);
         }

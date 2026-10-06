@@ -1,4 +1,4 @@
-package me.corriekay.jvr;
+package me.corriekay.openxr4j;
 
 /**
  * A position and an orientation in space.

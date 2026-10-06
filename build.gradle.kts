@@ -26,8 +26,8 @@ val lwjglNatives = System.getProperty("os.name").lowercase().let { os ->
 }
 
 dependencies {
-    // LWJGL is an implementation detail. Nothing from it appears in jvr's
-    // public API, so users of jvr do not need it on their compile classpath.
+    // LWJGL is an implementation detail. Nothing from it appears in openxr4j's
+    // public API, so users of openxr4j do not need it on their compile classpath.
     implementation(platform("org.lwjgl:lwjgl-bom:$lwjglVersion"))
     implementation("org.lwjgl:lwjgl")
     implementation("org.lwjgl:lwjgl-openxr")
@@ -55,6 +55,6 @@ tasks.register<JavaExec>("smoke") {
     group = "verification"
     description = "Runs the manual hardware check against the live OpenXR runtime."
     classpath = smoke.runtimeClasspath
-    mainClass.set("me.corriekay.jvr.Smoke")
+    mainClass.set("me.corriekay.openxr4j.Smoke")
     jvmArgs("--enable-native-access=ALL-UNNAMED")
 }

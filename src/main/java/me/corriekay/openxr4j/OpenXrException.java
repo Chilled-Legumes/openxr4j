@@ -1,24 +1,24 @@
-package me.corriekay.jvr;
+package me.corriekay.openxr4j;
 
 /**
  * Thrown when the OpenXR runtime reports a failure.
  *
- * <p>OpenXR itself reports failure through numeric result codes. jvr turns
+ * <p>OpenXR itself reports failure through numeric result codes. openxr4j turns
  * every failing code into this exception, so callers never check codes by
  * hand.
  */
-public class JvrException extends RuntimeException {
+public class OpenXrException extends RuntimeException {
 
     private final int resultCode;
     private final String resultName;
 
-    JvrException(String what, int resultCode) {
+    OpenXrException(String what, int resultCode) {
         super(what + " failed: " + Results.name(resultCode) + " (" + resultCode + ")");
         this.resultCode = resultCode;
         this.resultName = Results.name(resultCode);
     }
 
-    JvrException(String message) {
+    OpenXrException(String message) {
         super(message);
         this.resultCode = 0;
         this.resultName = "";

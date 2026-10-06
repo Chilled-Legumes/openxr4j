@@ -1,4 +1,4 @@
-package me.corriekay.jvr;
+package me.corriekay.openxr4j;
 
 import java.nio.ByteBuffer;
 import java.nio.IntBuffer;
@@ -11,12 +11,12 @@ import org.lwjgl.openxr.XrExtensionProperties;
 import org.lwjgl.system.MemoryStack;
 
 /**
- * Entry point to jvr: open a session with {@link #openSession(String)}, or
+ * Entry point to openxr4j: open a session with {@link #openSession(String)}, or
  * ask the OpenXR runtime questions before opening one.
  */
-public final class Jvr {
+public final class OpenXr {
 
-    private Jvr() {
+    private OpenXr() {
     }
 
     /**
@@ -25,7 +25,7 @@ public final class Jvr {
      *
      * <p>This asks the runtime directly and needs no session and no headset.
      *
-     * @throws JvrException if no OpenXR runtime is installed or it cannot be reached
+     * @throws OpenXrException if no OpenXR runtime is installed or it cannot be reached
      */
     public static List<String> availableExtensions() {
         try (MemoryStack stack = MemoryStack.stackPush()) {
@@ -61,7 +61,7 @@ public final class Jvr {
      * is easy to find.
      *
      * @param applicationName the name the runtime shows for this program
-     * @throws JvrException if there is no runtime, no connected headset, or the
+     * @throws OpenXrException if there is no runtime, no connected headset, or the
      *                      runtime lacks a feature this kind of session needs
      */
     public static VrSession openSession(String applicationName) {

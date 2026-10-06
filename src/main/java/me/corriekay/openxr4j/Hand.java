@@ -1,4 +1,4 @@
-package me.corriekay.jvr;
+package me.corriekay.openxr4j;
 
 /** Which hand a controller is held in. */
 public enum Hand {

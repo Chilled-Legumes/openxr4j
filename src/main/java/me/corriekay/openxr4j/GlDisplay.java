@@ -1,4 +1,4 @@
-package me.corriekay.jvr;
+package me.corriekay.openxr4j;
 
 import static org.lwjgl.opengl.GL30.GL_COLOR_ATTACHMENT0;
 import static org.lwjgl.opengl.GL30.GL_DEPTH24_STENCIL8;
@@ -51,7 +51,7 @@ import org.lwjgl.system.MemoryStack;
 /**
  * The headset's two eye images and the per-frame dance around them. Owned
  * by a {@link VrSession} opened with a graphics context. Package-private:
- * nothing here is part of jvr's public API.
+ * nothing here is part of openxr4j's public API.
  */
 final class GlDisplay {
 
@@ -138,7 +138,7 @@ final class GlDisplay {
             return GL_RGBA8;
         }
         if (count.get(0) == 0) {
-            throw new JvrException("The OpenXR runtime offers no image formats for OpenGL.");
+            throw new OpenXrException("The OpenXR runtime offers no image formats for OpenGL.");
         }
         return (int) formats.get(0);
     }
@@ -148,7 +148,7 @@ final class GlDisplay {
         Results.check("Counting views", XR10.xrEnumerateViewConfigurationViews(instance, VrSession.systemIdOf(session),
                 XR10.XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO, count, null));
         if (count.get(0) != EYES) {
-            throw new JvrException("Expected a two-eye headset, but the runtime reports " + count.get(0) + " views.");
+            throw new OpenXrException("Expected a two-eye headset, but the runtime reports " + count.get(0) + " views.");
         }
         XrViewConfigurationView.Buffer configViews = XrViewConfigurationView.calloc(EYES, stack);
         for (int eye = 0; eye < EYES; eye++) {
@@ -198,7 +198,7 @@ final class GlDisplay {
                 glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_RENDERBUFFER, depthBuffers[eye]);
                 int status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
                 if (status != GL_FRAMEBUFFER_COMPLETE) {
-                    throw new JvrException("An eye framebuffer is incomplete (OpenGL status " + status + ").");
+                    throw new OpenXrException("An eye framebuffer is incomplete (OpenGL status " + status + ").");
                 }
                 framebuffers[eye][i] = fbo;
             }
