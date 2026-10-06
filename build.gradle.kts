@@ -44,7 +44,7 @@ dependencies {
 // Hardware checks that need a real OpenXR runtime (and usually a headset).
 // They are not unit tests, so they get their own source folder, src/smoke,
 // and are run by hand:  ./gradlew smoke
-val smoke by sourceSets.creating {
+val smoke = sourceSets.create("smoke") {
     compileClasspath += sourceSets.main.get().output
     runtimeClasspath += sourceSets.main.get().output
 }
