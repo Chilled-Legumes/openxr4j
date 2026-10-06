@@ -405,6 +405,9 @@ public final class VrSession implements AutoCloseable {
     public boolean beginFrame() {
         ensureOpen();
         ensureDrawing();
+        if (ownsWindow) {
+            GLFW.glfwPollEvents(); // the hidden window is ours, so its housekeeping is too
+        }
         pollEvents();
         if (!running) {
             clearHands();
