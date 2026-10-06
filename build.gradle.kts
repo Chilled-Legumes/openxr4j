@@ -26,15 +26,14 @@ val lwjglNatives = System.getProperty("os.name").lowercase().let { os ->
 }
 
 dependencies {
-    // LWJGL is an implementation detail. Nothing from it appears in openxr4j's
-    // public API, so users of openxr4j do not need it on their compile classpath.
-    implementation(platform("org.lwjgl:lwjgl-bom:$lwjglVersion"))
-    implementation("org.lwjgl:lwjgl")
+    // OpenGL is forwarded (api): drawing into an eye means calling OpenGL, so
+    // a program using openxr4j needs it on its compile classpath. OpenXR and
+    // the window library stay private: nothing from them appears in the API.
+    api(platform("org.lwjgl:lwjgl-bom:$lwjglVersion"))
+    api("org.lwjgl:lwjgl")
+    api("org.lwjgl:lwjgl-opengl")
     implementation("org.lwjgl:lwjgl-openxr")
-    // The drawing half needs the window library (to reach the game's OpenGL
-    // context) and OpenGL itself (to wrap the headset's images in framebuffers).
     implementation("org.lwjgl:lwjgl-glfw")
-    implementation("org.lwjgl:lwjgl-opengl")
     runtimeOnly("org.lwjgl:lwjgl::$lwjglNatives")
     runtimeOnly("org.lwjgl:lwjgl-openxr::$lwjglNatives")
     runtimeOnly("org.lwjgl:lwjgl-glfw::$lwjglNatives")
