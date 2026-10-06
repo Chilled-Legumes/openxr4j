@@ -55,10 +55,10 @@ public final class OpenXr {
     }
 
     /**
-     * Connects to the installed OpenXR runtime and opens an input-only
-     * session: controllers and haptics, with nothing drawn to the headset.
-     * The same as {@link VrSession#open(String)}, offered here so the way in
-     * is easy to find.
+     * Connects to the installed OpenXR runtime and opens a full session that
+     * draws to the headset and reads the controllers. The same as
+     * {@link VrSession#open(String)}, offered here so the way in is easy to
+     * find.
      *
      * @param applicationName the name the runtime shows for this program
      * @throws OpenXrException if there is no runtime, no connected headset, or the
@@ -66,6 +66,11 @@ public final class OpenXr {
      */
     public static VrSession openSession(String applicationName) {
         return VrSession.open(applicationName);
+    }
+
+    /** The same as {@link VrSession#openInputOnly(String)}: controllers and haptics, nothing drawn. */
+    public static VrSession openInputOnlySession(String applicationName) {
+        return VrSession.openInputOnly(applicationName);
     }
 
     /** Whether the installed OpenXR runtime offers the named extension. */

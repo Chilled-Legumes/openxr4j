@@ -152,6 +152,7 @@ public final class VrSession implements AutoCloseable {
 
     // Drawing half. Null for an input-only session.
     private long glfwWindow;
+    private boolean ownsWindow;
     private boolean hasTimespec;
     private GlDisplay display;
     private final Eye[] eyes = {new Eye(this, 0), new Eye(this, 1)};
@@ -214,7 +215,7 @@ public final class VrSession implements AutoCloseable {
      * @throws OpenXrException if there is no runtime, no connected headset, or the
      *                      runtime lacks a feature this kind of session needs
      */
-    public static VrSession open(String applicationName) {
+    public static VrSession openInputOnly(String applicationName) {
         if (!System.getProperty("os.name").toLowerCase().contains("linux")) {
             throw new OpenXrException("Input-only sessions are implemented for Linux so far.");
         }
@@ -227,7 +228,47 @@ public final class VrSession implements AutoCloseable {
             throw new OpenXrException("The OpenXR runtime does not offer " + EXT_TIMESPEC
                     + ", which an input-only session needs.");
         }
-        return open(applicationName, 0L, new String[] {EXT_HEADLESS, EXT_TIMESPEC}, true);
+        return open(applicationName, 0L, false, new String[] {EXT_HEADLESS, EXT_TIMESPEC}, true);
+    }
+
+    /**
+     * Connects to the installed OpenXR runtime and opens a full session that
+     * draws to the headset, reads the controllers, and drives haptics.
+     *
+     * <p>openxr4j makes the OpenGL context itself, in a hidden window, and
+     * leaves it current on this thread. Everything you upload to the GPU
+     * lives in that context. If you later want a desktop window, ask for one
+     * with {@link #createWindow(int, int, String)} and it will share it.
+     *
+     * <p>Per frame: {@link #beginFrame()}, then for each {@link Eye} from
+     * {@link #eyes()} call {@link Eye#draw(Runnable)}, then {@link #endFrame()}.
+     *
+     * @param applicationName the name the runtime shows for this program
+     * @throws OpenXrException if there is no runtime, no connected headset, or
+     *                         the runtime lacks OpenGL support
+     */
+    public static VrSession open(String applicationName) {
+        GLFW.glfwInitHint(GLFW.GLFW_PLATFORM, GLFW.GLFW_PLATFORM_X11);
+        if (!GLFW.glfwInit()) {
+            throw new OpenXrException("The window library (GLFW) failed to start.");
+        }
+        GLFW.glfwDefaultWindowHints();
+        GLFW.glfwWindowHint(GLFW.GLFW_VISIBLE, GLFW.GLFW_FALSE);
+        GLFW.glfwWindowHint(GLFW.GLFW_CONTEXT_VERSION_MAJOR, 3);
+        GLFW.glfwWindowHint(GLFW.GLFW_CONTEXT_VERSION_MINOR, 3);
+        GLFW.glfwWindowHint(GLFW.GLFW_OPENGL_PROFILE, GLFW.GLFW_OPENGL_CORE_PROFILE);
+        long window = GLFW.glfwCreateWindow(64, 64, applicationName, 0L, 0L);
+        if (window == 0L) {
+            throw new OpenXrException("Could not create an OpenGL 3.3 context.");
+        }
+        GLFW.glfwMakeContextCurrent(window);
+        org.lwjgl.opengl.GL.createCapabilities();
+        try {
+            return openWith(applicationName, window, true);
+        } catch (RuntimeException e) {
+            GLFW.glfwDestroyWindow(window);
+            throw e;
+        }
     }
 
     /**
@@ -254,6 +295,10 @@ public final class VrSession implements AutoCloseable {
         if (glfwWindow == 0L) {
             throw new IllegalArgumentException("glfwWindow must be a live GLFW window handle.");
         }
+        return openWith(applicationName, glfwWindow, false);
+    }
+
+    private static VrSession openWith(String applicationName, long glfwWindow, boolean ownsWindow) {
         if (GLFW.glfwGetPlatform() != GLFW.GLFW_PLATFORM_X11) {
             throw new OpenXrException("openxr4j draws through X11 only so far. On Wayland, call"
                     + " glfwInitHint(GLFW_PLATFORM, GLFW_PLATFORM_X11) before glfwInit().");
@@ -264,13 +309,14 @@ public final class VrSession implements AutoCloseable {
         }
         boolean timespec = available.contains(EXT_TIMESPEC);
         String[] extensions = timespec ? new String[] {EXT_OPENGL, EXT_TIMESPEC} : new String[] {EXT_OPENGL};
-        VrSession vr = open(applicationName, glfwWindow, extensions, timespec);
-        return vr;
+        return open(applicationName, glfwWindow, ownsWindow, extensions, timespec);
     }
 
-    private static VrSession open(String applicationName, long glfwWindow, String[] extensions, boolean timespec) {
+    private static VrSession open(String applicationName, long glfwWindow, boolean ownsWindow,
+            String[] extensions, boolean timespec) {
         VrSession vr = new VrSession();
         vr.glfwWindow = glfwWindow;
+        vr.ownsWindow = ownsWindow;
         vr.hasTimespec = timespec;
         try {
             vr.createInstance(applicationName, extensions);
@@ -291,6 +337,39 @@ public final class VrSession implements AutoCloseable {
     /** Whether this session draws to the headset, as opposed to reading input only. */
     public boolean canDraw() {
         return display != null;
+    }
+
+    /**
+     * The GLFW window that holds this session's OpenGL context: the hidden one
+     * openxr4j made, or the one you handed in. Drawing sessions only.
+     */
+    public long window() {
+        ensureDrawing();
+        return glfwWindow;
+    }
+
+    /**
+     * Creates a visible desktop window whose OpenGL context shares this
+     * session's, so meshes, textures and shaders uploaded once draw to both
+     * the headset and the window. Returns the GLFW window handle.
+     *
+     * <p>openxr4j does not draw into it. To draw there, make its context
+     * current with {@code glfwMakeContextCurrent(handle)}, draw, swap its
+     * buffers, and make the session's context current again before the next
+     * {@link #beginFrame()}: {@code glfwMakeContextCurrent(vr.window())}.
+     * Destroy it with {@code glfwDestroyWindow} when done.
+     */
+    public long createWindow(int width, int height, String title) {
+        ensureDrawing();
+        GLFW.glfwDefaultWindowHints();
+        GLFW.glfwWindowHint(GLFW.GLFW_CONTEXT_VERSION_MAJOR, 3);
+        GLFW.glfwWindowHint(GLFW.GLFW_CONTEXT_VERSION_MINOR, 3);
+        GLFW.glfwWindowHint(GLFW.GLFW_OPENGL_PROFILE, GLFW.GLFW_OPENGL_CORE_PROFILE);
+        long handle = GLFW.glfwCreateWindow(width, height, title, 0L, glfwWindow);
+        if (handle == 0L) {
+            throw new OpenXrException("Could not create a window sharing the session's context.");
+        }
+        return handle;
     }
 
     /** The two eyes, left then right, for use inside a frame. Drawing sessions only. */
@@ -758,6 +837,10 @@ public final class VrSession implements AutoCloseable {
         if (display != null) {
             display.close();
             display = null;
+        }
+        if (ownsWindow && glfwWindow != 0L) {
+            GLFW.glfwDestroyWindow(glfwWindow);
+            glfwWindow = 0L;
         }
         if (viewSpace != null) {
             XR10.xrDestroySpace(viewSpace);
