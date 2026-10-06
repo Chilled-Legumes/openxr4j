@@ -154,6 +154,7 @@ public final class VrSession implements AutoCloseable {
     private long glfwWindow;
     private boolean hasTimespec;
     private GlDisplay display;
+    private final Eye[] eyes = {new Eye(this, 0), new Eye(this, 1)};
 
     private XrAction gripPoseAction;
     private XrAction aimPoseAction;
@@ -239,9 +240,10 @@ public final class VrSession implements AutoCloseable {
      * OpenGL context is current on this thread, and LWJGL's OpenGL
      * capabilities have been created for it.
      *
-     * <p>Per frame: {@link #beginFrame()}, then for each eye {@link #bindEye(int)}
-     * and draw, then {@link #endFrame()}. {@code beginFrame()} also reads the
-     * controllers, so {@link #update()} is not needed.
+     * <p>Per frame: {@link #beginFrame()}, then for each {@link Eye} from
+     * {@link #eyes()} call {@link Eye#draw(Runnable)}, then {@link #endFrame()}.
+     * {@code beginFrame()} also reads the controllers, so {@link #update()} is
+     * not needed.
      *
      * @param applicationName the name the runtime shows for this program
      * @param glfwWindow      the GLFW window handle whose context openxr4j draws with
@@ -289,6 +291,24 @@ public final class VrSession implements AutoCloseable {
     /** Whether this session draws to the headset, as opposed to reading input only. */
     public boolean canDraw() {
         return display != null;
+    }
+
+    /** The two eyes, left then right, for use inside a frame. Drawing sessions only. */
+    public Eye[] eyes() {
+        ensureDrawing();
+        return eyes.clone();
+    }
+
+    /** The left eye. Drawing sessions only. */
+    public Eye leftEye() {
+        ensureDrawing();
+        return eyes[0];
+    }
+
+    /** The right eye. Drawing sessions only. */
+    public Eye rightEye() {
+        ensureDrawing();
+        return eyes[1];
     }
 
     // ------------------------------------------------------------------
