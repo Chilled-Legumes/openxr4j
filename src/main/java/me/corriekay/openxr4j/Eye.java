@@ -57,7 +57,11 @@ public final class Eye {
      */
     public void draw(Runnable scene) {
         session.bindEye(index);
-        scene.run();
+        try {
+            scene.run();
+        } finally {
+            session.clearCurrentEye();
+        }
     }
 
     /** Points OpenGL at this eye's picture and returns its framebuffer id, for code that would rather bind by hand. */
@@ -83,6 +87,26 @@ public final class Eye {
     /** Fills {@code dest} (16 floats, column major) with this eye's projection matrix. */
     public float[] projectionMatrix(float near, float far, float[] dest) {
         return session.projectionMatrix(index, near, far, dest);
+    }
+
+    /**
+     * Fills {@code dest} (16 floats, column major) with projection times view
+     * for this eye: the one matrix that takes a world position to this eye's
+     * screen. {@code near} and {@code far} are the closest and farthest
+     * distances, in metres, that will be drawn.
+     */
+    public float[] viewProjectionMatrix(float near, float far, float[] dest) {
+        return session.viewProjectionMatrix(index, near, far, dest);
+    }
+
+    /** Projection matrix using the session's draw distances ({@code VrSession.setDrawDistances}). */
+    public float[] projectionMatrix(float[] dest) {
+        return session.projectionMatrix(index, dest);
+    }
+
+    /** Projection times view using the session's draw distances ({@code VrSession.setDrawDistances}). */
+    public float[] viewProjectionMatrix(float[] dest) {
+        return session.viewProjectionMatrix(index, dest);
     }
 
     @Override

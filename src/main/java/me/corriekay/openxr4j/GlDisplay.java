@@ -62,7 +62,7 @@ final class GlDisplay {
 
     private final XrInstance instance;
     private final XrSession session;
-    private final XrSpace baseSpace;
+    private XrSpace baseSpace;
 
     final int[] width = new int[EYES];
     final int[] height = new int[EYES];
@@ -93,6 +93,12 @@ final class GlDisplay {
     private boolean frameOpen;
     private boolean viewsValid;
     private long displayTime;
+    private long previousDisplayTime;
+
+    /** Nanoseconds between this frame's display time and the last one's; 0 until there have been two. */
+    long displayDelta() {
+        return previousDisplayTime == 0L ? 0L : displayTime - previousDisplayTime;
+    }
 
     GlDisplay(XrInstance instance, XrSession session, XrSpace baseSpace) {
         this.instance = instance;
@@ -116,6 +122,13 @@ final class GlDisplay {
     // ------------------------------------------------------------------
     // Setup
     // ------------------------------------------------------------------
+
+    /** Switches the space views are located in and the layer is submitted in. */
+    void setSpace(XrSpace space) {
+        this.baseSpace = space;
+        viewLocateInfo.space(space);
+        layer.space(space);
+    }
 
     private int chooseFormat(MemoryStack stack) {
         IntBuffer count = stack.mallocInt(1);
@@ -224,6 +237,7 @@ final class GlDisplay {
             throw new IllegalStateException("beginFrame() called twice without endFrame().");
         }
         Results.check("Waiting for the next frame", XR10.xrWaitFrame(session, frameWaitInfo, frameState));
+        previousDisplayTime = displayTime;
         displayTime = frameState.predictedDisplayTime();
         Results.check("Starting the frame", XR10.xrBeginFrame(session, frameBeginInfo));
         frameOpen = true;
@@ -284,6 +298,11 @@ final class GlDisplay {
 
     boolean isFrameOpen() {
         return frameOpen;
+    }
+
+    /** Nanoseconds between headset refreshes, as reported by the last wait; 0 before the first frame. */
+    long displayPeriod() {
+        return frameState.predictedDisplayPeriod();
     }
 
     long displayTime() {

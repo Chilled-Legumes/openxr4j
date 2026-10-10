@@ -71,6 +71,28 @@ public final class Pose {
      * {@code pos(0.208, -0.134, 0.299) rot(-0.954, -0.052, 0.286, 0.067)}.
      * Position is x, y, z in metres; rotation is the quaternion's x, y, z, w.
      */
+    /** Writes x, y, z into {@code dest[0..2]} and returns it. Creates no garbage. */
+    public float[] position(float[] dest) {
+        dest[0] = x; dest[1] = y; dest[2] = z;
+        return dest;
+    }
+
+    /** x, y, z as a new 3-float array. */
+    public float[] position() {
+        return position(new float[3]);
+    }
+
+    /** Writes the orientation's x, y, z, w into {@code dest[0..3]} and returns it. Creates no garbage. */
+    public float[] orientation(float[] dest) {
+        dest[0] = qx; dest[1] = qy; dest[2] = qz; dest[3] = qw;
+        return dest;
+    }
+
+    /** The orientation as a new 4-float array: x, y, z, w. */
+    public float[] orientation() {
+        return orientation(new float[4]);
+    }
+
     @Override
     public String toString() {
         return String.format(java.util.Locale.ROOT,

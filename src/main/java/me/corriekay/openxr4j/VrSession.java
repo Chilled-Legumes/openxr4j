@@ -32,6 +32,7 @@ import org.lwjgl.openxr.XrActiveActionSet;
 import org.lwjgl.openxr.XrApplicationInfo;
 import org.lwjgl.openxr.XrEventDataBuffer;
 import org.lwjgl.openxr.XrEventDataSessionStateChanged;
+import org.lwjgl.openxr.XrExtent2Df;
 import org.lwjgl.openxr.XrFovf;
 import org.lwjgl.openxr.XrGraphicsBindingOpenGLXlibKHR;
 import org.lwjgl.openxr.XrGraphicsRequirementsOpenGLKHR;
@@ -146,8 +147,12 @@ public final class VrSession implements AutoCloseable {
     private XrInstance instance;
     private XrSession session;
     private long systemId;
-    private XrSpace baseSpace;
+    private XrSpace localSpace;   // the runtime's own: origin at the head's starting spot
+    private XrSpace baseSpace;    // what everything is reported in: localSpace moved to the floor, or recentred
     private XrSpace viewSpace;
+    private XrSpace stageSpace;
+    private final Pose originPose = new Pose();   // baseSpace's origin, in localSpace
+    private final Pose stagePose = new Pose();
     private XrActionSet actionSet;
 
     // Drawing half. Null for an input-only session.
@@ -263,12 +268,8 @@ public final class VrSession implements AutoCloseable {
         }
         GLFW.glfwMakeContextCurrent(window);
         org.lwjgl.opengl.GL.createCapabilities();
-        try {
-            return openWith(applicationName, window, true);
-        } catch (RuntimeException e) {
-            GLFW.glfwDestroyWindow(window);
-            throw e;
-        }
+        // On failure, openWith's own clean-up destroys the window (ownsWindow).
+        return openWith(applicationName, window, true);
     }
 
     /**
@@ -299,13 +300,22 @@ public final class VrSession implements AutoCloseable {
     }
 
     private static VrSession openWith(String applicationName, long glfwWindow, boolean ownsWindow) {
-        if (GLFW.glfwGetPlatform() != GLFW.GLFW_PLATFORM_X11) {
-            throw new OpenXrException("openxr4j draws through X11 only so far. On Wayland, call"
-                    + " glfwInitHint(GLFW_PLATFORM, GLFW_PLATFORM_X11) before glfwInit().");
-        }
-        List<String> available = OpenXr.availableExtensions();
-        if (!available.contains(EXT_OPENGL)) {
-            throw new OpenXrException("The OpenXR runtime does not offer " + EXT_OPENGL + ".");
+        List<String> available;
+        try {
+            if (GLFW.glfwGetPlatform() != GLFW.GLFW_PLATFORM_X11) {
+                throw new OpenXrException("openxr4j draws through X11 only so far. On Wayland, call"
+                        + " glfwInitHint(GLFW_PLATFORM, GLFW_PLATFORM_X11) before glfwInit().");
+            }
+            available = OpenXr.availableExtensions();
+            if (!available.contains(EXT_OPENGL)) {
+                throw new OpenXrException("The OpenXR runtime does not offer " + EXT_OPENGL + ".");
+            }
+        } catch (RuntimeException e) {
+            // Nothing owns the window yet; from the open() below, VrSession.close() does.
+            if (ownsWindow) {
+                GLFW.glfwDestroyWindow(glfwWindow);
+            }
+            throw e;
         }
         boolean timespec = available.contains(EXT_TIMESPEC);
         String[] extensions = timespec ? new String[] {EXT_OPENGL, EXT_TIMESPEC} : new String[] {EXT_OPENGL};
@@ -327,11 +337,45 @@ public final class VrSession implements AutoCloseable {
                 vr.display = new GlDisplay(vr.instance, vr.session, vr.baseSpace);
             }
             vr.waitUntilRunning();
+            vr.placeOriginOnFloor();
             return vr;
         } catch (RuntimeException e) {
             vr.close();
             throw e;
         }
+    }
+
+    /**
+     * Milliseconds between headset refreshes, as the runtime reports it each
+     * frame (about 11.1 at 90 Hz). Valid after the first {@link #beginFrame()};
+     * 0 before that, or in an input-only session.
+     */
+    public float framePeriodMillis() {
+        ensureOpen();
+        return display == null ? 0f : display.displayPeriod() / 1_000_000f;
+    }
+
+    /**
+     * Seconds between this frame's display time and the previous frame's,
+     * as the runtime predicted them: the honest {@code dt} for motion. A
+     * dropped frame shows up as two periods, where {@link #framePeriodMillis()}
+     * would still say one. 0 until the second {@link #beginFrame()}, and in an
+     * input-only session.
+     */
+    public float frameDeltaSeconds() {
+        ensureOpen();
+        return display == null ? 0f : display.displayDelta() / 1_000_000_000f;
+    }
+
+    /**
+     * The headset's refresh rate in Hz, from the same report as
+     * {@link #framePeriodMillis()}. 0 before the first frame, or in an
+     * input-only session.
+     */
+    public float refreshRate() {
+        ensureOpen();
+        long period = display == null ? 0L : display.displayPeriod();
+        return period == 0L ? 0f : 1_000_000_000f / period;
     }
 
     /** Whether this session draws to the headset, as opposed to reading input only. */
@@ -428,13 +472,31 @@ public final class VrSession implements AutoCloseable {
     public int bindEye(int eye) {
         ensureDrawing();
         checkEye(eye);
+        currentEye = eyes[eye];
         return display.bindEye(eye);
+    }
+
+    private Eye currentEye;
+
+    void clearCurrentEye() {
+        currentEye = null;
+    }
+
+    /**
+     * The eye whose picture is the current draw target: the one whose
+     * {@link Eye#draw(Runnable)} or {@link #bindEye(int)} was last called
+     * this frame, or {@code null} outside an eye's draw (before the first
+     * bind, after {@code Eye.draw} returns, and after {@link #endFrame()}).
+     */
+    public Eye currentEye() {
+        return currentEye;
     }
 
     /** Hands the frame to the headset. Call once per frame after {@link #beginFrame()}, whatever it returned. */
     public void endFrame() {
         ensureOpen();
         ensureDrawing();
+        currentEye = null;
         if (running) {
             display.endFrame();
         }
@@ -541,6 +603,195 @@ public final class VrSession implements AutoCloseable {
         return dest;
     }
 
+    /**
+     * Fills {@code dest} with the one matrix most programs want per eye:
+     * projection times view, so a world-space position multiplied by it lands
+     * on that eye's screen. Column major. {@code dest} must hold 16 floats.
+     * Creates no garbage.
+     */
+    public float[] viewProjectionMatrix(int eye, float near, float far, float[] dest) {
+        if (dest == null || dest.length < 16) {
+            throw new IllegalArgumentException("dest must hold 16 floats.");
+        }
+        projectionMatrix(eye, near, far, scratchProjection);
+        viewMatrix(eye, scratchView);
+        for (int col = 0; col < 4; col++) {
+            for (int row = 0; row < 4; row++) {
+                float sum = 0f;
+                for (int k = 0; k < 4; k++) {
+                    sum += scratchProjection[k * 4 + row] * scratchView[col * 4 + k];
+                }
+                dest[col * 4 + row] = sum;
+            }
+        }
+        return dest;
+    }
+
+    private final float[] scratchProjection = new float[16];
+    private final float[] scratchView = new float[16];
+    private float near = 0.05f;
+    private float far = 1000f;
+
+    /**
+     * Sets the closest and farthest distances, in metres, that the eyes draw;
+     * anything nearer or farther is clipped. Defaults: 0.05 and 1000. Used by
+     * the matrix methods that take no distances.
+     */
+    public void setDrawDistances(float near, float far) {
+        if (!(near > 0f) || !(far > near)) {
+            throw new IllegalArgumentException("Need 0 < near < far; got " + near + " and " + far + ".");
+        }
+        this.near = near;
+        this.far = far;
+    }
+
+    /** The near draw distance in metres. */
+    public float nearDistance() {
+        return near;
+    }
+
+    /** The far draw distance in metres. */
+    public float farDistance() {
+        return far;
+    }
+
+    /** {@link #viewProjectionMatrix(int, float, float, float[])} with the session's draw distances. */
+    public float[] viewProjectionMatrix(int eye, float[] dest) {
+        return viewProjectionMatrix(eye, near, far, dest);
+    }
+
+    /** {@link #projectionMatrix(int, float, float, float[])} with the session's draw distances. */
+    public float[] projectionMatrix(int eye, float[] dest) {
+        return projectionMatrix(eye, near, far, dest);
+    }
+
+    /**
+     * Moves the world's origin to the floor directly under the head, facing
+     * the way the head faces now (yaw only; the floor stays level). Every
+     * position openxr4j reports afterwards, hands, head and eyes, is relative
+     * to that spot. This is the same thing {@code open} does once at the
+     * start, and it is independent of the runtime's own recentre.
+     *
+     * <p>Call it between frames, not between {@code beginFrame()} and
+     * {@code endFrame()}.
+     *
+     * @throws OpenXrException if the head cannot be located right now
+     */
+    public void recentre() {
+        ensureOpen();
+        long time = display != null && display.isFrameOpen() ? display.displayTime() : now();
+        Pose head = new Pose();
+        if (!locate(viewSpace, localSpace, time, head)) {
+            throw new OpenXrException("The runtime cannot locate the head right now.");
+        }
+        float floorY = 0f;
+        Pose stage = new Pose();
+        if (stageSpace != null && locate(stageSpace, localSpace, time, stage)) {
+            floorY = stage.y();
+        }
+        float yaw = yawOf(head.qx(), head.qy(), head.qz(), head.qw());
+        setOrigin(head.x(), floorY, head.z(), yaw);
+    }
+
+    /**
+     * At open: put the origin on the floor under the head's starting spot.
+     * If the runtime has no floor or cannot be asked yet, the origin stays at
+     * the head's starting spot (the runtime's own default).
+     */
+    private void placeOriginOnFloor() {
+        if (stageSpace == null) {
+            return;
+        }
+        try {
+            Pose stage = new Pose();
+            if (locate(stageSpace, localSpace, now(), stage)) {
+                setOrigin(0f, stage.y(), 0f, 0f);
+            }
+        } catch (OpenXrException e) {
+            // No usable clock before the first frame on this runtime: leave the origin at the head.
+        }
+    }
+
+    /** Recreates baseSpace as localSpace moved to (x, y, z) and turned by yaw (radians) about vertical. */
+    private void setOrigin(float x, float y, float z, float yaw) {
+        float sy = (float) Math.sin(yaw / 2);
+        float cy = (float) Math.cos(yaw / 2);
+        originPose.set(x, y, z, 0f, sy, 0f, cy);
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            XrReferenceSpaceCreateInfo info = XrReferenceSpaceCreateInfo.calloc(stack)
+                    .type$Default()
+                    .referenceSpaceType(XR10.XR_REFERENCE_SPACE_TYPE_LOCAL);
+            info.poseInReferenceSpace().orientation(q -> q.x(0f).y(sy).z(0f).w(cy));
+            info.poseInReferenceSpace().position$(p -> p.x(x).y(y).z(z));
+            PointerBuffer handle = stack.mallocPointer(1);
+            Results.check("Moving the world origin", XR10.xrCreateReferenceSpace(session, info, handle));
+            XrSpace old = baseSpace;
+            baseSpace = new XrSpace(handle.get(0), session);
+            if (display != null) {
+                display.setSpace(baseSpace);
+            }
+            if (old != null) {
+                XR10.xrDestroySpace(old);
+            }
+        }
+    }
+
+    /** Heading about the vertical axis, in radians, of a quaternion. */
+    private static float yawOf(float qx, float qy, float qz, float qw) {
+        return (float) Math.atan2(2 * (qw * qy + qx * qz), 1 - 2 * (qy * qy + qz * qz));
+    }
+
+    /**
+     * The floor's height in the same space as the hands and head, as set in
+     * the runtime's room setup. openxr4j puts the world's origin on the floor
+     * at open, so this is normally 0; it is here for runtimes without a floor
+     * space, where the origin stays at the head's starting spot and this
+     * throws.
+     *
+     * @throws OpenXrException if the runtime has no floor-centred space, or
+     *                         cannot locate it right now
+     */
+    public float floorHeight() {
+        locateStage();
+        return stagePose.y();
+    }
+
+    /**
+     * The floor rectangle from room setup, in the same space as the hands and
+     * head. See {@link PlayArea}.
+     *
+     * @throws OpenXrException if the runtime has no floor-centred space, or
+     *                         cannot locate it right now
+     */
+    public PlayArea playArea() {
+        locateStage();
+        float qx = stagePose.qx();
+        float qy = stagePose.qy();
+        float qz = stagePose.qz();
+        float qw = stagePose.qw();
+        float yaw = (float) Math.toDegrees(yawOf(qx, qy, qz, qw));
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            XrExtent2Df bounds = XrExtent2Df.calloc(stack);
+            int result = Results.check("Reading the play area",
+                    XR10.xrGetReferenceSpaceBoundsRect(session, XR10.XR_REFERENCE_SPACE_TYPE_STAGE, bounds));
+            if (result == XR10.XR_SPACE_BOUNDS_UNAVAILABLE) {
+                return new PlayArea(stagePose.x(), stagePose.z(), yaw, 0f, 0f);
+            }
+            return new PlayArea(stagePose.x(), stagePose.z(), yaw, bounds.width(), bounds.height());
+        }
+    }
+
+    private void locateStage() {
+        ensureOpen();
+        if (stageSpace == null) {
+            throw new OpenXrException("This runtime does not report a floor.");
+        }
+        long time = display != null && display.isFrameOpen() ? display.displayTime() : now();
+        if (!locate(stageSpace, time, stagePose)) {
+            throw new OpenXrException("The runtime cannot locate the floor right now.");
+        }
+    }
+
     /** Where the head is, in the same space as the hands. Returns a new {@link Pose}. */
     public Pose headPose() {
         return headPose(new Pose());
@@ -621,6 +872,17 @@ public final class VrSession implements AutoCloseable {
     // ------------------------------------------------------------------
     // Hands
     // ------------------------------------------------------------------
+
+    private final Controller[] controllers = {new Controller(this, Hand.LEFT), new Controller(this, Hand.RIGHT)};
+
+    /**
+     * A long-lived handle on one hand's controller. Always the same object
+     * for the same hand, so take it once and keep it; its reads follow the
+     * session's state frame by frame. See {@link Controller}.
+     */
+    public Controller controller(Hand hand) {
+        return controllers[hand.ordinal()];
+    }
 
     /** Whether the hand's controller currently has a valid position and orientation. */
     public boolean isTracked(Hand hand) {
@@ -848,6 +1110,12 @@ public final class VrSession implements AutoCloseable {
         if (viewSpace != null) {
             XR10.xrDestroySpace(viewSpace);
         }
+        if (stageSpace != null) {
+            XR10.xrDestroySpace(stageSpace);
+        }
+        if (localSpace != null) {
+            XR10.xrDestroySpace(localSpace);
+        }
         for (int i = 0; i < 2; i++) {
             if (gripSpaces[i] != null) {
                 XR10.xrDestroySpace(gripSpaces[i]);
@@ -1016,6 +1284,9 @@ public final class VrSession implements AutoCloseable {
                     .poseInReferenceSpace(VrSession::identity);
             Results.check("Creating the reference space",
                     XR10.xrCreateReferenceSpace(session, spaceInfo, handle));
+            localSpace = new XrSpace(handle.get(0), session);
+            Results.check("Creating the world space",
+                    XR10.xrCreateReferenceSpace(session, spaceInfo, handle));
             baseSpace = new XrSpace(handle.get(0), session);
 
             XrReferenceSpaceCreateInfo viewInfo = XrReferenceSpaceCreateInfo.calloc(stack)
@@ -1024,6 +1295,23 @@ public final class VrSession implements AutoCloseable {
                     .poseInReferenceSpace(VrSession::identity);
             Results.check("Creating the head space", XR10.xrCreateReferenceSpace(session, viewInfo, handle));
             viewSpace = new XrSpace(handle.get(0), session);
+
+            // The floor-centred space, if the runtime offers one (most do).
+            IntBuffer count = stack.mallocInt(1);
+            Results.check("Counting reference spaces", XR10.xrEnumerateReferenceSpaces(session, count, null));
+            IntBuffer types = stack.mallocInt(count.get(0));
+            Results.check("Listing reference spaces", XR10.xrEnumerateReferenceSpaces(session, count, types));
+            for (int i = 0; i < types.limit(); i++) {
+                if (types.get(i) == XR10.XR_REFERENCE_SPACE_TYPE_STAGE) {
+                    XrReferenceSpaceCreateInfo stageInfo = XrReferenceSpaceCreateInfo.calloc(stack)
+                            .type$Default()
+                            .referenceSpaceType(XR10.XR_REFERENCE_SPACE_TYPE_STAGE)
+                            .poseInReferenceSpace(VrSession::identity);
+                    Results.check("Creating the floor space",
+                            XR10.xrCreateReferenceSpace(session, stageInfo, handle));
+                    stageSpace = new XrSpace(handle.get(0), session);
+                }
+            }
         }
     }
 
@@ -1349,7 +1637,11 @@ public final class VrSession implements AutoCloseable {
 
     /** Fills {@code dest} if the space has a valid pose right now. Leaves it untouched otherwise. */
     private boolean locate(XrSpace space, long time, Pose dest) {
-        Results.check("Locating a hand", XR10.xrLocateSpace(space, baseSpace, time, location));
+        return locate(space, baseSpace, time, dest);
+    }
+
+    private boolean locate(XrSpace space, XrSpace in, long time, Pose dest) {
+        Results.check("Locating a space", XR10.xrLocateSpace(space, in, time, location));
         if ((location.locationFlags() & LOCATION_VALID) != LOCATION_VALID) {
             return false;
         }
