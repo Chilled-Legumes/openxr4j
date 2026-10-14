@@ -5,6 +5,7 @@ import static org.lwjgl.opengl.GL30.GL_DEPTH24_STENCIL8;
 import static org.lwjgl.opengl.GL30.GL_DEPTH_STENCIL_ATTACHMENT;
 import static org.lwjgl.opengl.GL30.GL_FRAMEBUFFER;
 import static org.lwjgl.opengl.GL30.GL_FRAMEBUFFER_COMPLETE;
+import static org.lwjgl.opengl.GL30.GL_FRAMEBUFFER_SRGB;
 import static org.lwjgl.opengl.GL30.GL_RENDERBUFFER;
 import static org.lwjgl.opengl.GL30.GL_TEXTURE_2D;
 import static org.lwjgl.opengl.GL30.glBindFramebuffer;
@@ -12,6 +13,8 @@ import static org.lwjgl.opengl.GL30.glBindRenderbuffer;
 import static org.lwjgl.opengl.GL30.glCheckFramebufferStatus;
 import static org.lwjgl.opengl.GL30.glDeleteFramebuffers;
 import static org.lwjgl.opengl.GL30.glDeleteRenderbuffers;
+import static org.lwjgl.opengl.GL30.glDisable;
+import static org.lwjgl.opengl.GL30.glEnable;
 import static org.lwjgl.opengl.GL30.glFramebufferRenderbuffer;
 import static org.lwjgl.opengl.GL30.glFramebufferTexture2D;
 import static org.lwjgl.opengl.GL30.glGenFramebuffers;
@@ -249,7 +252,12 @@ final class GlDisplay {
         return frameState.shouldRender() && viewsValid;
     }
 
-    /** Makes an eye's image the current draw target and returns its framebuffer id. */
+    /**
+     * Makes an eye's image the current draw target and returns its framebuffer id.
+     * On an sRGB image, OpenGL's sRGB encoding is switched on, so the colours a
+     * program writes (and clears with) are taken as linear and encoded on the way
+     * in. Switched off again in {@link #endFrame()}.
+     */
     int bindEye(int eye) {
         if (!frameOpen) {
             throw new IllegalStateException("bindEye() called outside a frame.");
@@ -263,6 +271,9 @@ final class GlDisplay {
         int fbo = framebuffers[eye][acquiredIndex[eye]];
         glBindFramebuffer(GL_FRAMEBUFFER, fbo);
         glViewport(0, 0, width[eye], height[eye]);
+        if (colourFormat == GL_SRGB8_ALPHA8) {
+            glEnable(GL_FRAMEBUFFER_SRGB);
+        }
         return fbo;
     }
 
@@ -280,6 +291,7 @@ final class GlDisplay {
             }
         }
         glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        glDisable(GL_FRAMEBUFFER_SRGB);
 
         boolean submit = drawn == EYES && viewsValid;
         if (submit) {
