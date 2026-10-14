@@ -40,20 +40,7 @@ dependencies {
     runtimeOnly("org.lwjgl:lwjgl-opengl::$lwjglNatives")
 }
 
-// Hardware checks that need a real OpenXR runtime (and usually a headset).
-// They are not unit tests, so they get their own source folder, src/smoke,
-// and are run by hand:  ./gradlew smoke
-val smoke = sourceSets.create("smoke") {
-    compileClasspath += sourceSets.main.get().output
-    runtimeClasspath += sourceSets.main.get().output
-}
-configurations[smoke.implementationConfigurationName].extendsFrom(configurations.implementation.get())
-configurations[smoke.runtimeOnlyConfigurationName].extendsFrom(configurations.runtimeOnly.get())
-
-tasks.register<JavaExec>("smoke") {
-    group = "verification"
-    description = "Runs the manual hardware check against the live OpenXR runtime."
-    classpath = smoke.runtimeClasspath
-    mainClass.set("me.corriekay.openxr4j.Smoke")
-    jvmArgs("--enable-native-access=ALL-UNNAMED")
+// Machine-local additions, kept out of git, are applied when present.
+if (file("local.gradle.kts").exists()) {
+    apply(from = "local.gradle.kts")
 }

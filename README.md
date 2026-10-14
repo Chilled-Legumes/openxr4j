@@ -137,28 +137,3 @@ that makes its own window on a Wayland desktop must do the same
   session needs the runtime to offer `XR_MND_headless` and
   `XR_KHR_convert_timespec_time`. SteamVR does.
 - A headset connected to the runtime. For drawing it has to be worn, or its controllers stop tracking.
-
-## Checking it against real hardware
-
-The checks below live in `src/smoke`, which is kept out of this
-repository, so `./gradlew smoke` only runs in a working copy that has them.
-
-```bash
-./gradlew smoke
-```
-
-lists the runtime's extensions, and
-
-```bash
-./gradlew smoke --args=hands
-```
-
-reads both controllers for 30 seconds and buzzes a controller when its
-trigger is pulled past halfway.
-
-```bash
-./gradlew smoke --args=draw
-```
-
-opens a small window and a drawing session, fills the left eye blue and the
-right eye orange for 20 seconds, and prints the head pose.
