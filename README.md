@@ -48,21 +48,21 @@ calls OpenGL itself); OpenXR and GLFW stay inside.
 
 ## Status
 
-Early. What exists is the input half:
+Early, and Linux only so far. It has been run on SteamVR with a Quest Pro.
 
 | Feature | State |
 |---|---|
-| List what the runtime offers (`OpenXr.availableExtensions()`) | Works, checked against SteamVR on Linux |
-| Input-only session, no graphics (`VrSession.openInputOnly`) | Works, checked with a Quest Pro over Steam Link on Linux. Blocks until the session has started |
-| Controller poses, grips, thumbsticks, controller type | Work, same check. The headset has to be worn, or its controllers stop tracking |
-| Triggers and face buttons (A, B, X, Y) | Work, same check |
-| Haptics (`VrSession.vibrate`), timed and continuous | Work; felt on both controllers. The continuous form holds until stopped on SteamVR |
-| Menu button | Written; did not register on a Quest Pro under SteamVR. SteamVR uses the left menu button to open its own dashboard, so it likely never reaches the application |
-| Thumbstick click | Works, same check |
-| Drawing to the headset (`VrSession.open(name)` or `open(name, glfwWindow)`, `beginFrame`, `Eye.draw`, `endFrame`, eye and head poses, view and projection matrices, `createWindow`) | Works, both with openxr4j's own hidden window and with a window handed in: 90 Hz on SteamVR, Quest Pro, Linux. OpenGL through GLFW on X11 only |
-| World origin on the floor, `floorHeight()`, `playArea()`, `recentre()` | Written 2026-10-08. At open the origin goes on the floor under the head's starting spot, facing its way; `recentre()` does the same again on demand. `floorHeight()` and `playArea()` checked against a Quest Pro on SteamVR (Corrie's grid matched the room); the floor origin and `recentre()` not yet |
-| Spectator window (`VrSession.addSpectator`), a third `Eye` in `eyes()` that shows one eye's view on the desktop | Works: 2026-10-15, SteamVR, Quest Pro, Linux (NVIDIA), with openxr4j's own window following the right eye. A window handed in, and following the left eye, not yet tried |
-| Windows | Not started. The input-only session is Linux-only so far |
+| List what the runtime offers (`OpenXr.availableExtensions()`) | Works |
+| Input-only session, no graphics (`VrSession.openInputOnly`) | Works. Blocks until the session has started |
+| Controller poses, grips, thumbsticks, thumbstick click, controller type | Work. The headset has to be worn, or its controllers stop tracking |
+| Triggers and face buttons (A, B, X, Y) | Work |
+| Haptics (`VrSession.vibrate`), timed and continuous | Work. The continuous form holds until stopped |
+| Menu button | Written, but on SteamVR with a Quest Pro neither menu button reaches the application: SteamVR keeps the left one for its dashboard, the headset the right one |
+| Drawing to the headset (`VrSession.open(name)` or `open(name, glfwWindow)`, `beginFrame`, `Eye.draw`, `endFrame`, eye and head poses, view and projection matrices, `createWindow`) | Works, with openxr4j's own hidden window or one handed in. OpenGL through GLFW on X11 only |
+| `floorHeight()`, `playArea()` | Work |
+| World origin on the floor, `recentre()` | Written, not yet confirmed. At open the origin goes on the floor under the head's starting spot, facing its way; `recentre()` does the same again on demand |
+| Spectator window (`VrSession.addSpectator`) | Works with openxr4j's own window. A window handed in, and following the left eye, not yet tried |
+| Microsoft Windows | Not started |
 
 ## Example
 
