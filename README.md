@@ -61,6 +61,7 @@ Early. What exists is the input half:
 | Thumbstick click | Works, same check |
 | Drawing to the headset (`VrSession.open(name)` or `open(name, glfwWindow)`, `beginFrame`, `Eye.draw`, `endFrame`, eye and head poses, view and projection matrices, `createWindow`) | Works, both with openxr4j's own hidden window and with a window handed in: 90 Hz on SteamVR, Quest Pro, Linux. OpenGL through GLFW on X11 only |
 | World origin on the floor, `floorHeight()`, `playArea()`, `recentre()` | Written 2026-10-08. At open the origin goes on the floor under the head's starting spot, facing its way; `recentre()` does the same again on demand. `floorHeight()` and `playArea()` checked against a Quest Pro on SteamVR (Corrie's grid matched the room); the floor origin and `recentre()` not yet |
+| Spectator window (`VrSession.addSpectator`), a third `Eye` in `eyes()` that shows one eye's view on the desktop | Works: 2026-10-15, SteamVR, Quest Pro, Linux (NVIDIA), with openxr4j's own window following the right eye. A window handed in, and following the left eye, not yet tried |
 | Windows | Not started. The input-only session is Linux-only so far |
 
 ## Example
@@ -117,9 +118,26 @@ encoded on the way in. Colours from a glTF material or from Blender go in
 as they are; colours picked on a screen (a `java.awt.Color`, a hex code)
 are sRGB and come out too light unless converted to linear first.
 
-For a desktop view, `vr.createWindow(width, height, title)` returns a GLFW
-window whose context shares the session's, so the same meshes draw to both.
-openxr4j does not draw into it; the program does, switching contexts with
+For a desktop view, `vr.addSpectator()` opens a window that shows what the
+right eye sees (`addSpectator(Eye.LEFT)` for the left), and `eyes()` lists
+it as a third `Eye` from then on, so the loop above draws it unchanged. It
+sees from that eye's pose, with the eye's view from top to bottom fitted
+sideways to the window's shape. A program with a window of its own passes
+it in: `addSpectator(window)` or `addSpectator(window, Eye.LEFT)`. That
+window's context must share the session's (`vr.createWindow` makes one
+that does). `eye.isSpectator()` tells the spectator apart, for anything a
+program wants to draw differently there.
+
+The spectator is drawn in the session's context, like the eyes, and
+`endFrame()` copies the picture onto the window. The window never waits for
+the monitor, so it cannot slow the headset down. Closing the window openxr4j
+made removes the spectator; so does `removeSpectator()`.
+
+`vr.createWindow(width, height, title)` alone returns a GLFW window whose
+context shares the session's. Sharing covers buffers, textures and shaders,
+but not vertex array objects or framebuffers, so a mesh drawn through a
+vertex array object does not draw there as it is. openxr4j does not draw
+into such a window; the program does, switching contexts with
 `glfwMakeContextCurrent` and switching back to `vr.window()` before the
 next frame.
 

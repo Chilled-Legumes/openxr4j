@@ -1,11 +1,12 @@
 package me.corriekay.openxr4j;
 
 /**
- * One of the headset's two eyes: its picture to draw into, and where it is
- * and what it sees for the current frame.
+ * One of the headset's two eyes, or the spectator window: its picture to
+ * draw into, and where it is and what it sees for the current frame.
  *
- * <p>Get them from {@link VrSession#leftEye()} and {@link VrSession#rightEye()}
- * on a drawing session, and use them inside a frame:
+ * <p>Get them from {@link VrSession#eyes()}, {@link VrSession#leftEye()} and
+ * {@link VrSession#rightEye()} on a drawing session, and use them inside a
+ * frame:
  *
  * <pre>{@code
  * if (vr.beginFrame()) {
@@ -19,8 +20,22 @@ package me.corriekay.openxr4j;
  * <p>{@link #draw(Runnable)} points OpenGL at this eye's picture and runs your
  * drawing code. It does not point it anywhere afterward; {@code endFrame()}
  * returns OpenGL to the window once the frame is done.
+ *
+ * <p>A spectator ({@link VrSession#addSpectator()}) is a third {@code Eye}
+ * that {@code eyes()} lists after the two real ones. It sees from one real
+ * eye's pose and shows the picture on a desktop window, so the loop above
+ * draws it with no change.
  */
 public final class Eye {
+
+    /** The left eye's index: for {@link VrSession#bindEye(int)} and the other per-eye calls, and for choosing which eye a spectator follows. */
+    public static final int LEFT = 0;
+
+    /** The right eye's index. See {@link #LEFT}. */
+    public static final int RIGHT = 1;
+
+    /** The spectator's index, when one is attached with {@link VrSession#addSpectator()}. */
+    public static final int SPECTATOR = 2;
 
     private final VrSession session;
     private final int index;
@@ -30,14 +45,19 @@ public final class Eye {
         this.index = index;
     }
 
-    /** 0 for the left eye, 1 for the right. */
+    /** {@link #LEFT}, {@link #RIGHT} or {@link #SPECTATOR}. */
     public int index() {
         return index;
     }
 
     /** Whether this is the left eye. */
     public boolean isLeft() {
-        return index == 0;
+        return index == LEFT;
+    }
+
+    /** Whether this is the spectator window rather than one of the headset's eyes. */
+    public boolean isSpectator() {
+        return index == SPECTATOR;
     }
 
     /** Width in pixels of this eye's picture. */
@@ -111,6 +131,11 @@ public final class Eye {
 
     @Override
     public String toString() {
-        return (isLeft() ? "left eye " : "right eye ") + width() + "x" + height();
+        return switch (index) {
+            case LEFT -> "left eye " + width() + "x" + height();
+            case RIGHT -> "right eye " + width() + "x" + height();
+            default -> "spectator " + width() + "x" + height() + ", following the "
+                    + (session.spectatorFollows() == LEFT ? "left" : "right") + " eye";
+        };
     }
 }

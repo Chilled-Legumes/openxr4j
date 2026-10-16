@@ -160,7 +160,13 @@ public final class VrSession implements AutoCloseable {
     private boolean ownsWindow;
     private boolean hasTimespec;
     private GlDisplay display;
-    private final Eye[] eyes = {new Eye(this, 0), new Eye(this, 1)};
+    private final Eye[] eyes = {new Eye(this, Eye.LEFT), new Eye(this, Eye.RIGHT)};
+    private final Eye spectatorEye = new Eye(this, Eye.SPECTATOR);
+    private Spectator spectator;   // null when no spectator window is attached
+    private String applicationName = "";
+
+    private static final int SPECTATOR_WIDTH = 1280;
+    private static final int SPECTATOR_HEIGHT = 720;
 
     private XrAction gripPoseAction;
     private XrAction aimPoseAction;
@@ -325,6 +331,7 @@ public final class VrSession implements AutoCloseable {
     private static VrSession open(String applicationName, long glfwWindow, boolean ownsWindow,
             String[] extensions, boolean timespec) {
         VrSession vr = new VrSession();
+        vr.applicationName = applicationName;
         vr.glfwWindow = glfwWindow;
         vr.ownsWindow = ownsWindow;
         vr.hasTimespec = timespec;
@@ -394,12 +401,19 @@ public final class VrSession implements AutoCloseable {
 
     /**
      * Creates a visible desktop window whose OpenGL context shares this
-     * session's, so meshes, textures and shaders uploaded once draw to both
-     * the headset and the window. Returns the GLFW window handle.
+     * session's. Returns the GLFW window handle.
      *
-     * <p>openxr4j does not draw into it. To draw there, make its context
-     * current with {@code glfwMakeContextCurrent(handle)}, draw, swap its
-     * buffers, and make the session's context current again before the next
+     * <p>Sharing covers buffers, textures and shaders, but not vertex array
+     * objects or framebuffers: those exist only in the context that made
+     * them. A mesh drawn through a vertex array object therefore does not
+     * draw in this window's context as it is. To show the scene on the
+     * desktop, {@link #addSpectator(long)} is the simple road: it draws in
+     * the session's context and copies the picture onto the window.
+     *
+     * <p>openxr4j does not draw into this window unless it is a spectator.
+     * To draw there yourself, make its context current with
+     * {@code glfwMakeContextCurrent(handle)}, draw, swap its buffers, and
+     * make the session's context current again before the next
      * {@link #beginFrame()}: {@code glfwMakeContextCurrent(vr.window())}.
      * Destroy it with {@code glfwDestroyWindow} when done.
      */
@@ -416,10 +430,15 @@ public final class VrSession implements AutoCloseable {
         return handle;
     }
 
-    /** The two eyes, left then right, for use inside a frame. Drawing sessions only. */
+    /**
+     * The eyes to draw this frame: left, then right, then the spectator if
+     * one is attached ({@link #addSpectator()}). Drawing sessions only.
+     */
     public Eye[] eyes() {
         ensureDrawing();
-        return eyes.clone();
+        return spectator == null
+                ? new Eye[] {eyes[Eye.LEFT], eyes[Eye.RIGHT]}
+                : new Eye[] {eyes[Eye.LEFT], eyes[Eye.RIGHT], spectatorEye};
     }
 
     /** The left eye. Drawing sessions only. */
@@ -432,6 +451,154 @@ public final class VrSession implements AutoCloseable {
     public Eye rightEye() {
         ensureDrawing();
         return eyes[1];
+    }
+
+    // ------------------------------------------------------------------
+    // Spectator (drawing sessions only)
+    // ------------------------------------------------------------------
+
+    /**
+     * Opens a desktop window that shows what the right eye sees, and adds it
+     * to {@link #eyes()} as a third {@link Eye}. Same as
+     * {@code addSpectator(Eye.RIGHT)}.
+     *
+     * @return the spectator eye
+     */
+    public Eye addSpectator() {
+        return addSpectator(Eye.RIGHT);
+    }
+
+    /**
+     * Opens a desktop window, 1280 by 720 and titled with the application
+     * name, that shows what one eye sees, and adds it to {@link #eyes()} as a
+     * third {@link Eye}. A loop that draws every eye in {@code eyes()} draws
+     * the spectator with no other change.
+     *
+     * <p>The spectator sees from the followed eye's pose, with that eye's
+     * view from top to bottom, widened or narrowed sideways to the window's
+     * shape. It is drawn in the session's own OpenGL context, like the eyes,
+     * and {@link #endFrame()} copies the picture onto the window after the
+     * frame has gone to the headset. The window never waits for the monitor,
+     * so it cannot slow the headset down.
+     *
+     * <p>openxr4j owns this window. Closing it (its X button) removes the
+     * spectator at the next {@link #beginFrame()}; so does
+     * {@link #removeSpectator()}. Window events need
+     * {@code glfwPollEvents()}, which {@code beginFrame()} already calls when
+     * openxr4j made the session's window too.
+     *
+     * <p>Call between frames, with the session's context current.
+     *
+     * @param follows {@link Eye#LEFT} or {@link Eye#RIGHT}
+     * @return the spectator eye
+     * @throws IllegalStateException if a spectator is already attached
+     */
+    public Eye addSpectator(int follows) {
+        checkSpectatorRequest(follows);
+        long window = createWindow(SPECTATOR_WIDTH, SPECTATOR_HEIGHT, applicationName);
+        return attachSpectator(window, true, follows);
+    }
+
+    /**
+     * Shows what the right eye sees on a window of your own, and adds it to
+     * {@link #eyes()} as a third {@link Eye}. Same as
+     * {@code addSpectator(glfwWindow, Eye.RIGHT)}.
+     *
+     * @return the spectator eye
+     */
+    public Eye addSpectator(long glfwWindow) {
+        return addSpectator(glfwWindow, Eye.RIGHT);
+    }
+
+    /**
+     * Shows what one eye sees on a window of your own, and adds it to
+     * {@link #eyes()} as a third {@link Eye}. Everything else is as in
+     * {@link #addSpectator(int)}, except that the window stays yours:
+     * openxr4j does not watch its X button and does not destroy it.
+     *
+     * <p>Requirements on the window: made with GLFW, double-buffered (GLFW's
+     * default), and with an OpenGL context that shares the session's, which
+     * {@link #createWindow(int, int, String)} gives, or {@code vr.window()}
+     * as the share argument of {@code glfwCreateWindow}. Call
+     * {@link #removeSpectator()} before destroying it.
+     *
+     * <p>Call between frames, with the session's context current.
+     *
+     * @param glfwWindow the GLFW window handle to show the spectator on
+     * @param follows    {@link Eye#LEFT} or {@link Eye#RIGHT}
+     * @return the spectator eye
+     * @throws IllegalStateException if a spectator is already attached
+     * @throws OpenXrException       if the window's context does not share the session's
+     */
+    public Eye addSpectator(long glfwWindow, int follows) {
+        checkSpectatorRequest(follows);
+        if (glfwWindow == 0L) {
+            throw new IllegalArgumentException("glfwWindow must be a live GLFW window handle.");
+        }
+        if (glfwWindow == this.glfwWindow) {
+            throw new IllegalArgumentException("The spectator needs a window of its own; this one holds the"
+                    + " session's context.");
+        }
+        return attachSpectator(glfwWindow, false, follows);
+    }
+
+    private void checkSpectatorRequest(int follows) {
+        ensureOpen();
+        ensureDrawing();
+        if (follows != Eye.LEFT && follows != Eye.RIGHT) {
+            throw new IllegalArgumentException("A spectator follows Eye.LEFT or Eye.RIGHT; got " + follows + ".");
+        }
+        if (spectator != null) {
+            throw new IllegalStateException("A spectator is already attached. Call removeSpectator() first.");
+        }
+        if (display.isFrameOpen()) {
+            throw new IllegalStateException("Attach a spectator between frames, not between beginFrame() and"
+                    + " endFrame().");
+        }
+    }
+
+    private Eye attachSpectator(long window, boolean ownsWindow, int follows) {
+        try {
+            spectator = new Spectator(glfwWindow, window, ownsWindow, follows, display.colourFormat);
+        } catch (RuntimeException e) {
+            if (ownsWindow) {
+                GLFW.glfwDestroyWindow(window);
+            }
+            throw e;
+        }
+        return spectatorEye;
+    }
+
+    /**
+     * Takes the spectator out of {@link #eyes()} and frees what it used. The
+     * window openxr4j made is destroyed; a window you handed in is left open.
+     * Does nothing if no spectator is attached. Call between frames.
+     */
+    public void removeSpectator() {
+        if (spectator == null) {
+            return;
+        }
+        if (display.isFrameOpen()) {
+            throw new IllegalStateException("Remove the spectator between frames, not between beginFrame() and"
+                    + " endFrame().");
+        }
+        spectator.close();
+        spectator = null;
+    }
+
+    /** Whether a spectator window is attached. */
+    public boolean hasSpectator() {
+        return spectator != null;
+    }
+
+    /** The spectator's GLFW window handle, or 0 if no spectator is attached. */
+    public long spectatorWindow() {
+        return spectator == null ? 0L : spectator.window;
+    }
+
+    /** Which eye the spectator follows, {@link Eye#LEFT} or {@link Eye#RIGHT}; -1 if none is attached. */
+    public int spectatorFollows() {
+        return spectator == null ? -1 : spectator.follows;
     }
 
     // ------------------------------------------------------------------
@@ -452,12 +619,18 @@ public final class VrSession implements AutoCloseable {
         if (ownsWindow) {
             GLFW.glfwPollEvents(); // the hidden window is ours, so its housekeeping is too
         }
+        if (spectator != null && spectator.ownsWindow && spectator.closeRequested()) {
+            removeSpectator();
+        }
         pollEvents();
         if (!running) {
             clearHands();
             return false;
         }
         boolean draw = display.beginFrame();
+        if (spectator != null) {
+            spectator.refreshSize();
+        }
         readInput(display.displayTime());
         return draw;
     }
@@ -467,11 +640,18 @@ public final class VrSession implements AutoCloseable {
      * cover it, and returns the OpenGL framebuffer id. Draw that eye's view
      * after calling this.
      *
-     * @param eye 0 for the left eye, 1 for the right
+     * @param eye {@link Eye#LEFT}, {@link Eye#RIGHT}, or {@link Eye#SPECTATOR} when one is attached
      */
     public int bindEye(int eye) {
         ensureDrawing();
         checkEye(eye);
+        if (eye == Eye.SPECTATOR) {
+            if (!display.isFrameOpen()) {
+                throw new IllegalStateException("bindEye() called outside a frame.");
+            }
+            currentEye = spectatorEye;
+            return spectator.bind();
+        }
         currentEye = eyes[eye];
         return display.bindEye(eye);
     }
@@ -492,31 +672,47 @@ public final class VrSession implements AutoCloseable {
         return currentEye;
     }
 
-    /** Hands the frame to the headset. Call once per frame after {@link #beginFrame()}, whatever it returned. */
+    /**
+     * Hands the frame to the headset, then shows the spectator's picture on
+     * its window if one is attached and was drawn. Call once per frame after
+     * {@link #beginFrame()}, whatever it returned.
+     */
     public void endFrame() {
         ensureOpen();
         ensureDrawing();
         currentEye = null;
         if (running) {
             display.endFrame();
+            if (spectator != null) {
+                spectator.present();
+            }
         }
     }
 
-    /** Width in pixels of an eye's image. */
+    /** Width in pixels of an eye's image. For the spectator, its window's width as of this frame. */
     public int eyeWidth(int eye) {
         ensureDrawing();
         checkEye(eye);
-        return display.width[eye];
+        return eye == Eye.SPECTATOR ? spectator.width : display.width[eye];
     }
 
-    /** Height in pixels of an eye's image. */
+    /** Height in pixels of an eye's image. For the spectator, its window's height as of this frame. */
     public int eyeHeight(int eye) {
         ensureDrawing();
         checkEye(eye);
-        return display.height[eye];
+        return eye == Eye.SPECTATOR ? spectator.height : display.height[eye];
     }
 
-    /** The pose of an eye for the current frame, as located by {@link #beginFrame()}. Returns a new {@link Pose}. */
+    /** The headset eye whose pose and field of view an eye index uses: itself, or the one the spectator follows. */
+    private int headsetEye(int eye) {
+        return eye == Eye.SPECTATOR ? spectator.follows : eye;
+    }
+
+    /**
+     * The pose of an eye for the current frame, as located by
+     * {@link #beginFrame()}. The spectator's is the pose of the eye it
+     * follows. Returns a new {@link Pose}.
+     */
     public Pose eyePose(int eye) {
         return eyePose(eye, new Pose());
     }
@@ -525,7 +721,7 @@ public final class VrSession implements AutoCloseable {
     public Pose eyePose(int eye, Pose dest) {
         ensureDrawing();
         checkEye(eye);
-        XrPosef pose = display.eyePose(eye);
+        XrPosef pose = display.eyePose(headsetEye(eye));
         return dest.set(pose.position$().x(), pose.position$().y(), pose.position$().z(),
                 pose.orientation().x(), pose.orientation().y(), pose.orientation().z(), pose.orientation().w());
     }
@@ -534,6 +730,9 @@ public final class VrSession implements AutoCloseable {
      * Fills {@code dest} with a 4x4 OpenGL projection matrix for an eye, column
      * major as OpenGL expects, using the eye's field of view for the current
      * frame. {@code dest} must hold 16 floats.
+     *
+     * <p>For the spectator: the followed eye's view from top to bottom, and
+     * sideways as wide as the window's shape calls for, centred.
      */
     public float[] projectionMatrix(int eye, float near, float far, float[] dest) {
         ensureDrawing();
@@ -541,11 +740,21 @@ public final class VrSession implements AutoCloseable {
         if (dest == null || dest.length < 16) {
             throw new IllegalArgumentException("dest must hold 16 floats.");
         }
-        XrFovf fov = display.eyeFov(eye);
-        float left = (float) Math.tan(fov.angleLeft());
-        float right = (float) Math.tan(fov.angleRight());
+        XrFovf fov = display.eyeFov(headsetEye(eye));
         float up = (float) Math.tan(fov.angleUp());
         float down = (float) Math.tan(fov.angleDown());
+        float left;
+        float right;
+        if (eye == Eye.SPECTATOR) {
+            // The headset's eye is roughly square and the window usually is not:
+            // keep the eye's height of view and fit the width to the window.
+            float halfWidth = (up - down) * spectator.width / spectator.height / 2f;
+            left = -halfWidth;
+            right = halfWidth;
+        } else {
+            left = (float) Math.tan(fov.angleLeft());
+            right = (float) Math.tan(fov.angleRight());
+        }
         float width = right - left;
         float height = up - down;
         java.util.Arrays.fill(dest, 0, 16, 0f);
@@ -570,7 +779,7 @@ public final class VrSession implements AutoCloseable {
         if (dest == null || dest.length < 16) {
             throw new IllegalArgumentException("dest must hold 16 floats.");
         }
-        XrPosef pose = display.eyePose(eye);
+        XrPosef pose = display.eyePose(headsetEye(eye));
         float qx = pose.orientation().x();
         float qy = pose.orientation().y();
         float qz = pose.orientation().z();
@@ -813,9 +1022,16 @@ public final class VrSession implements AutoCloseable {
         }
     }
 
-    private static void checkEye(int eye) {
+    private void checkEye(int eye) {
+        if (eye == Eye.SPECTATOR) {
+            if (spectator == null) {
+                throw new IllegalArgumentException("Eye.SPECTATOR was given, but no spectator is attached.");
+            }
+            return;
+        }
         if (eye < 0 || eye >= GlDisplay.EYES) {
-            throw new IllegalArgumentException("eye must be 0 (left) or 1 (right).");
+            throw new IllegalArgumentException("eye must be Eye.LEFT (0), Eye.RIGHT (1), or Eye.SPECTATOR (2)"
+                    + " when a spectator is attached; got " + eye + ".");
         }
     }
 
@@ -1099,6 +1315,10 @@ public final class VrSession implements AutoCloseable {
         running = false;
         focused = false;
 
+        if (spectator != null) {
+            spectator.close();
+            spectator = null;
+        }
         if (display != null) {
             display.close();
             display = null;
