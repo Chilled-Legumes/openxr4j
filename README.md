@@ -155,3 +155,7 @@ that makes its own window on a Wayland desktop must do the same
   session needs the runtime to offer `XR_MND_headless` and
   `XR_KHR_convert_timespec_time`. SteamVR does.
 - A headset connected to the runtime. For drawing it has to be worn, or its controllers stop tracking.
+
+## Licence
+
+openxr4j is released into the public domain under the Unlicense; see `LICENSE`.
